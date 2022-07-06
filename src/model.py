@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import time as ti
 import warnings # to suppress warnings
 import pickle
+import os.path
 from datetime import datetime
 warnings.filterwarnings('ignore')
 
@@ -49,6 +50,18 @@ class Stop(object):
         # charger_rating in KWh
         for i in range(num_chargers):
             self.chargers.append(Charger(f"{self.name} Charger {len(self.chargers) + 1}", charger_rating))
+
+    def set_to_be_depot(self):
+        '''
+        Method that set the stop as a bus depot and create an operation log for the depot
+        '''
+        self.is_depot = True
+        self.operation_log_filepath = os.path.join("../output/"+self.name+"_operation_log.csv")
+        with open(self.operation_log_filepath, 'w', newline='') as log_csv_file:
+            csv_writer_log = csv.writer(log_csv_file)
+            csv_writer_log.writerow(["ID", "Route", "Scheduled Launch Time", "Actual Launch Time", "Arrival Time", 
+                                 "Distance Travelled (Km)", "Energy Consumed (KWh)", 
+                                 "Launching SOC", "Arriving SOC"])
 
     def shortest_charger_queue(self):
         '''
@@ -148,6 +161,12 @@ class Stop(object):
                         if not self.Bus_standby[route] == []:
                             self.Bus_standby[route][0].status = "running"
                             self.Bus_standby[route][0].is_launched = True
+                            self.Bus_standby[route][0].speed = self.Bus_standby[route][0].speed # reassign the bus speed with any given speed, providing space for changing bus speed when launching
+                            self.Bus_standby[route][0].scheduled_tlaunch = scheduled_time
+                            self.Bus_standby[route][0].actual_tlaunch = current_time
+                            self.Bus_standby[route][0].start_distance = self.Bus_standby[route][0].total_distance_traveled
+                            self.Bus_standby[route][0].start_energy_use = self.Bus_standby[route][0].total_energy_used
+                            self.Bus_standby[route][0].start_SOC = self.Bus_standby[route][0].SOC()
                             self.Bus_standby[route].pop(0)
                             #self.Delayed_time -= self.Time_ToBe_Launched[route]
                             self.Time_ToBe_Launched[route].pop(0)
@@ -553,6 +572,11 @@ class Bus(object):
         self.total_energy_used = 0.0 # Kwh
         self.time_to_leave = cur_stop.stop_time # s
         self.status = status
+        self.scheduled_tlaunch = None
+        self.actual_tlaunch = None
+        self.start_distance = None
+        self.start_energy_use = None
+        self.start_SOC = None
         
     def SOC(self):
         '''
@@ -629,6 +653,7 @@ class Bus(object):
                     if queue_size <= 1 or not self.can_reach_next_stop():
     
                         self.cur_stop.add_bus_to_charger_queue(shortest_charger_queue_index, self)
+                        self.update_depot_operation_log(self.cur_stop.operation_log_filepath) # submit the status of bus to the depot operation log
                 elif self.cur_stop.connects_to_depot(self.route.name): # has a connection to the depot
                     #if not self.can_reach_next_stop(): # route the bus to the depot
                     if not self.is_launched:
@@ -652,6 +677,20 @@ class Bus(object):
         if cur_direction not in cur_stop.edges: # Change direction if end was reached
             return self.route.get_other_direction(cur_stop, cur_direction)
         return cur_direction
+
+    def update_depot_operation_log(self, path):
+        with open(path, 'a') as log_csv:
+            writer = csv.writer(log_csv)
+            id = self.id
+            route = self.route
+            sche_t = self.scheduled_tlaunch
+            actu_t = self.actual_tlaunch
+            arri_t = pd.to_timedelta(time, unit = "second")
+            t_dist = self.total_distance_traveled - self.start_distance
+            energy_c = self.total_energy_used - self.start_energy_use
+            s_SOC = self.start_SOC
+            a_SOC = self.SOC()
+            writer.writerow([id, route, sche_t, actu_t, arri_t, t_dist, energy_c, round(s_SOC,4), round(a_SOC,4)])
 
     @property
     def id(self):
